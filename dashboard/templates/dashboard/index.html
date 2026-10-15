@@ -1,0 +1,125 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>Perceptron Dashboard</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="dashboard()">
+
+  <h1>รหัสนักศึกษา: 67114540439</h1>
+  <h2>ชื่อ-นามสกุล: รพีภัทร ขั้นทอง</h2>
+
+  <button @click="startTraining()" :disabled="training">
+    เริ่มฝึกสอน
+  </button>
+
+  <p>Epoch: <span x-text="epoch"></span></p>
+  <p>Loss: <span x-text="loss"></span></p>
+  <p>Accuracy: <span x-text="acc"></span></p>
+
+  <canvas id="chart" width="600" height="300"></canvas>
+
+  <!-- ผลลัพธ์สุดท้าย แสดงหลังฝึกสอนเสร็จ -->
+  <template x-if="done">
+    <div>
+      <h3>Loss curve (loss_curve.png)</h3>
+      <img :src="lossCurveUrl" alt="loss curve">
+
+      <h3>ตารางเปรียบเทียบ learning rate</h3>
+      <table border="1" cellpadding="6">
+        <thead>
+          <tr><th>Learning rate</th><th>Loss</th><th>Accuracy</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="r in results" :key="r.lr">
+            <tr>
+              <td x-text="r.lr"></td>
+              <td x-text="r.loss.toFixed(4)"></td>
+              <td x-text="r.accuracy.toFixed(4)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </template>
+
+  <script>
+  const LOSS_CURVE_URL = "{% static 'dashboard/loss_curve.png' %}";
+  const points = [];    // ค่า loss, accuracy ของทุก epoch ที่ได้รับมาแล้ว
+
+  function dashboard() {
+    return {
+      training: false, done: false,
+      epoch: 0, loss: 0, acc: 0,
+      results: [], lossCurveUrl: '',
+
+      startTraining() {
+        this.training = true;
+        this.done = false;
+        points.length = 0;
+
+        // EventSource = browser API สำหรับรับ SSE stream
+        const es = new EventSource('/train/');
+        es.onmessage = (e) => {
+          const m = JSON.parse(e.data);
+          this.epoch = m.epoch;
+          this.loss = m.loss.toFixed(4);
+          this.acc = m.accuracy.toFixed(4);
+          drawChart(m.epoch, m.loss, m.accuracy);
+        };
+        // ฝึกสอนเสร็จ → แสดงผลลัพธ์สุดท้าย แล้วปิด stream
+        es.addEventListener('done', (e) => {
+          this.results = JSON.parse(e.data).results;
+          // ต่อเวลาท้าย URL เพื่อไม่ให้เบราว์เซอร์ใช้รูปเก่าจาก cache
+          this.lossCurveUrl = LOSS_CURVE_URL + '?t=' + Date.now();
+          this.done = true;
+          this.training = false;
+          es.close();
+        });
+        // ต้องปิดเอง ไม่งั้น EventSource จะต่อใหม่และเริ่มฝึกสอนซ้ำ
+        es.onerror = () => { es.close(); this.training = false; };
+      },
+    };
+  }
+
+  // วาดกราฟ loss (แดง) และ accuracy (เขียว) ของทุก epoch ที่ผ่านมา
+  function drawChart(epoch, loss, accuracy) {
+    points.push({epoch, loss, accuracy});
+
+    const cv = document.getElementById('chart');
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height, PAD = 30;
+    const maxY = Math.max(1, ...points.map(p => p.loss));
+    const maxX = Math.max(1, points.length - 1);
+    const px = (i) => PAD + (W - 2 * PAD) * i / maxX;
+    const py = (v) => H - PAD - (H - 2 * PAD) * v / maxY;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // แกน
+    ctx.strokeStyle = 'black';
+    ctx.beginPath();
+    ctx.moveTo(PAD, PAD); ctx.lineTo(PAD, H - PAD); ctx.lineTo(W - PAD, H - PAD);
+    ctx.stroke();
+    ctx.fillStyle = 'black';
+    ctx.fillText(maxY.toFixed(2), 2, PAD);
+    ctx.fillText('0', 12, H - PAD);
+    ctx.fillText('epoch ' + epoch, W - PAD - 50, H - 10);
+
+    for (const [key, color] of [['loss', 'red'], ['accuracy', 'green']]) {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      points.forEach((p, i) => {
+        if (i === 0) ctx.moveTo(px(i), py(p[key]));
+        else ctx.lineTo(px(i), py(p[key]));
+      });
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillText(key, PAD + 10 + (key === 'loss' ? 0 : 40), PAD - 10);
+    }
+  }
+  </script>
+</body>
+</html>
